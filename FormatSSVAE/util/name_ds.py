@@ -11,10 +11,10 @@ class NameDataset(Dataset):
             csv_file (string): Path to the csv file WITHOUT labels
             col_name (string): The column name corresponding to the people names that'll be standardized
         """
+        self.max_string_len = max_string_len
         df = pd.read_csv(csv_path)
         df = self._clean_dataframe(df, col_name)
         self.data_frame = df[col_name]
-        self.max_string_len = max_string_len
 
     def __len__(self):
         return len(self.data_frame)
