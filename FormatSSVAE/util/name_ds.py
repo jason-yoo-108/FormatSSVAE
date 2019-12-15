@@ -5,7 +5,7 @@ from FormatSSVAE.const import ALL_LETTERS
 import pandas as pd
 
 class NameDataset(Dataset):
-    def __init__(self, csv_path, col_name, max_string_len = 18):
+    def __init__(self, csv_path, col_name, max_string_len = 18, format_col_name = None):
         """
         Args:
             csv_file (string): Path to the csv file WITHOUT labels
@@ -15,6 +15,7 @@ class NameDataset(Dataset):
         df = pd.read_csv(csv_path)
         df = self._clean_dataframe(df, col_name)
         self.data_frame = df[col_name]
+        self.format_col = df[format_col_name] if format_col_name is not None else None
 
     def __len__(self):
         return len(self.data_frame)

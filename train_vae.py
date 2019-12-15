@@ -3,6 +3,7 @@ import pyro
 from pyro.infer import SVI, Trace_ELBO
 from pyro.optim import Adam
 from torch.utils.data import DataLoader
+from torch.utils.data.sampler import WeightedRandomSampler
 
 from FormatSSVAE.vae import FormatVAE
 from FormatSSVAE.util.name_ds import NameDataset
@@ -12,13 +13,34 @@ from FormatSSVAE.util.plot import plot_losses
 pyro.enable_validation(True)
 NUM_EPOCHS = 100
 ADAM_CONFIG = {'lr': 0.0005}
+BATCH_SIZE = 2048
 MAX_INPUT_STRING_LEN = 18
 
-dataset = NameDataset("data/marathon_results_2015.csv", "Name", max_string_len=MAX_INPUT_STRING_LEN)
-dataset.add_csv("data/marathon_results_2016.csv", "Name")
-dataset.add_csv("data/marathon_results_2017.csv", "Name")
+def weights_for_balanced_class(df, target_column):
+    """
+    Assign higher weights to rows whose class is not prevalent
+    to sample each class equally with DataLoader
+    """
+    target = df
+    num_classes = target.nunique()
+    counts = [0] * num_classes
+    for row_class in target: counts[row_class] += 1
+    class_weights = [0] * num_classes
+    for i,count in enumerate(counts): class_weights[i] = len(target)/count
+    weights = [0] * len(target)
+    for i,row_class in enumerate(target): weights[i] = class_weights[row_class]
+    return weights
 
-dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
+"""
+dataset = NameDataset("data/cleaned.csv", "name", max_string_len=MAX_INPUT_STRING_LEN)
+dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+"""
+
+dataset = NameDataset("data/cleaned.csv", "name", max_string_len=MAX_INPUT_STRING_LEN, format_col_name='format')
+sample_weights = weights_for_balanced_class(dataset.format_col, 'format')
+sampler = WeightedRandomSampler(sample_weights, len(sample_weights), replacement=True)
+dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, sampler=sampler, shuffle=False)
+
 vae = FormatVAE(encoder_hidden_size=256, decoder_hidden_size=64, mlp_hidden_size=32)
 svi_loss = SVI(vae.model, vae.guide, Adam(ADAM_CONFIG), loss=Trace_ELBO())
 
