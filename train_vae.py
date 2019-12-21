@@ -1,5 +1,6 @@
 import pandas as pd
 import pyro
+from pyro import poutine
 from pyro.infer import SVI, Trace_ELBO
 from pyro.optim import Adam
 import sys
@@ -32,6 +33,30 @@ def weights_for_balanced_class(df, target_column):
     for i,row_class in enumerate(target): weights[i] = class_weights[row_class]
     return weights
 
+def simple_elbo_kl_annealing(model, guide, *args, **kwargs):
+    # get the annealing factor and latents to anneal from the keyword
+    # arguments passed to the model and guide
+    annealing_factor = kwargs.pop('annealing_factor', 1.0)
+    latents_to_anneal = kwargs.pop('latents_to_anneal', [])
+    # run the guide and replay the model against the guide
+    guide_trace = poutine.trace(guide).get_trace(*args, **kwargs)
+    model_trace = poutine.trace(
+        poutine.replay(model, trace=guide_trace)).get_trace(*args, **kwargs)
+
+    elbo = 0.0
+    # loop through all the sample sites in the model and guide trace and
+    # construct the loss; note that we scale all the log probabilities of
+    # samples sites in `latents_to_anneal` by the factor `annealing_factor`
+    for site in model_trace.nodes.values():
+        if site["type"] == "sample":
+            factor = annealing_factor if site["name"] in latents_to_anneal else 1.0
+            elbo = elbo + factor * site["fn"].log_prob(site["value"]).sum()
+    for site in guide_trace.nodes.values():
+        if site["type"] == "sample":
+            factor = annealing_factor if site["name"] in latents_to_anneal else 1.0
+            elbo = elbo - factor * site["fn"].log_prob(site["value"]).sum()
+    return -elbo
+
 
 dataset = NameDataset("data/cleaned.csv", "name", max_string_len=MAX_INPUT_STRING_LEN, format_col_name='format')
 sample_weights = weights_for_balanced_class(dataset.format_col, 'format')
@@ -40,13 +65,15 @@ dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, sampler=sampler, shuffle
 
 vae = FormatVAE(encoder_hidden_size=256, decoder_hidden_size=64, mlp_hidden_size=32)
 if len(sys.argv) > 1: vae.load_checkpoint(filename=sys.argv[1].split('/')[-1])
-svi_loss = SVI(vae.model, vae.guide, Adam(ADAM_CONFIG), loss=Trace_ELBO())
+# svi_loss = SVI(vae.model, vae.guide, Adam(ADAM_CONFIG), loss=Trace_ELBO())
+svi_loss = SVI(vae.model, vae.guide, Adam(ADAM_CONFIG), loss=simple_elbo_kl_annealing)
 
 def train_one_epoch(loss, dataloader, epoch_num):
     total_loss = 0.
     i = 1
     for batch in dataloader:
-        batch_loss = loss.step(batch)/len(batch)
+        # batch_loss = loss.step(batch)/len(batch)
+        batch_loss = loss.step(batch, annealing_factor=0.2, latents_to_anneal=["z"])/len(batch)
         total_loss += batch_loss
         if i%10 == 0: print(f"Epoch {epoch_num} {i}/{len(dataloader)} Loss: {batch_loss}")
         i += 1

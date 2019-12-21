@@ -6,7 +6,7 @@ def pad_string(original: str, desired_len: int, pad_character: str = PAD_CHAR):
     Returns the padded version of the original string to length: desired_len
     original: The string to be padded
     """
-    return original + (pad_character * (desired_len - len(original)))
+    return (pad_character * (desired_len - len(original))) + original
 
 def chars_to_tensor(chars: list, letter_set: str):
     """
