@@ -14,7 +14,7 @@ from FormatSSVAE.util.plot import plot_losses
 
 
 pyro.enable_validation(True)
-NUM_EPOCHS = 1000
+NUM_EPOCHS = 100000
 ADAM_CONFIG = {'lr': 0.0005}
 BATCH_SIZE = 2048
 MAX_INPUT_STRING_LEN = 18
