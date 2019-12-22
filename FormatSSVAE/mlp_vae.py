@@ -1,10 +1,8 @@
 import os
 import pyro
 import pyro.distributions as dist
-import torch.nn.functional as functional
 import torch
-import random
-from FormatSSVAE.const import ALL_LETTERS, EOS_CHAR, MAX_STRING_LEN, OUTPUT_LETTERS, DROP_CHAR
+from FormatSSVAE.const import ALL_LETTERS, EOS_CHAR, MAX_STRING_LEN
 from FormatSSVAE.neural_net.mlp import NeuralNet
 from FormatSSVAE.neural_net.rnn import Encoder, Decoder
 from FormatSSVAE.util.convert import chars_to_tensor, strings_to_tensor
@@ -13,7 +11,7 @@ class FormatVAE():
 
     def __init__(self, encoder_hidden_size: int = 128, decoder_hidden_size: int = 64, mlp_hidden_size: int = 16, drop_off: float = 0.05):
         self.encoder_lstm = Encoder(input_size=len(ALL_LETTERS), hidden_size=encoder_hidden_size)
-        self.decoder_lstm = Decoder(input_size=len(OUTPUT_LETTERS), hidden_size=decoder_hidden_size, output_size=len(ALL_LETTERS))
+        self.decoder_lstm = Decoder(input_size=len(ALL_LETTERS), hidden_size=decoder_hidden_size, output_size=len(ALL_LETTERS))
 
         # Latent dimension is <LSTM decoder hidden size x LSTM decoder num layers x 2>
         self.latent_dim = decoder_hidden_size * 1 * 2
@@ -44,16 +42,15 @@ class FormatVAE():
 
             # z: <batch size, latent dim> => 2 x <LSTM decoder num layers x batch size x LSTM decoder hidden size>
             decoder_hidden_state = (z[:,:self.decoder_hidden_size].unsqueeze(0), z[:,self.decoder_hidden_size:].unsqueeze(0))
-            decoder_input = chars_to_tensor(chars=[EOS_CHAR]*batch_size, letter_set=OUTPUT_LETTERS)
+            decoder_input = chars_to_tensor(chars=[EOS_CHAR]*batch_size, letter_set=ALL_LETTERS)
 
             # Step decoder MAX_STRING_LEN times using EOS as input and observe every output
             for i in range(MAX_STRING_LEN):
-                if self._do_drop_off():
-                    decoder_input = chars_to_tensor(chars=[DROP_CHAR]*batch_size, letter_set=OUTPUT_LETTERS)
                 categorical_probs, decoder_hidden_state = self.decoder_lstm.forward(decoder_input, decoder_hidden_state)
                 sample = pyro.sample(f"x_{i}", dist.OneHotCategorical(probs=categorical_probs.squeeze(0)), obs=x_tensor[i])
+                decoder_input = sample.unsqueeze(0)
                 for j in range(len(outputs)): 
-                    outputs[j] += OUTPUT_LETTERS[decoder_input.squeeze(0)[j].nonzero()]
+                    outputs[j] += ALL_LETTERS[decoder_input.squeeze(0)[j].nonzero()]
             
             # Replace every character after the first occurrence EOS in all names
             outputs = list(map(lambda string: string[:string.find(EOS_CHAR)] if string.find(EOS_CHAR) != -1 else string, outputs))
@@ -108,8 +105,6 @@ class FormatVAE():
         }
         torch.save(save_content, filepath)
 
-    def _do_drop_off(self):
-        return random.random() < self.drop_off
 
     def _preprocess_input(self, x):
         """

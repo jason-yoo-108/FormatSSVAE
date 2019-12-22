@@ -3,6 +3,7 @@ import pyro
 from pyro import poutine
 from pyro.infer import SVI, Trace_ELBO
 from pyro.optim import Adam
+from pyro import poutine
 import sys
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import WeightedRandomSampler
@@ -13,7 +14,7 @@ from FormatSSVAE.util.plot import plot_losses
 
 
 pyro.enable_validation(True)
-NUM_EPOCHS = 1000
+NUM_EPOCHS = 100000
 ADAM_CONFIG = {'lr': 0.0005}
 BATCH_SIZE = 2048
 MAX_INPUT_STRING_LEN = 18
@@ -58,10 +59,19 @@ def simple_elbo_kl_annealing(model, guide, *args, **kwargs):
     return -elbo
 
 
-dataset = NameDataset("data/cleaned.csv", "name", max_string_len=MAX_INPUT_STRING_LEN, format_col_name='format')
-sample_weights = weights_for_balanced_class(dataset.format_col, 'format')
-sampler = WeightedRandomSampler(sample_weights, len(sample_weights), replacement=True)
-dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, sampler=sampler, shuffle=False)
+    elbo = 0.0
+    # loop through all the sample sites in the model and guide trace and
+    # construct the loss; note that we scale all the log probabilities of
+    # samples sites in `latents_to_anneal` by the factor `annealing_factor`
+    for site in model_trace.values():
+        if site["type"] == "sample":
+            factor = annealing_factor if site["name"] in latents_to_anneal else 1.0
+            elbo = elbo + factor * site["fn"].log_prob(site["value"]).sum()
+    for site in guide_trace.values():
+        if site["type"] == "sample":
+            factor = annealing_factor if site["name"] in latents_to_anneal else 1.0
+            elbo = elbo - factor * site["fn"].log_prob(site["value"]).sum()
+    return -elbo
 
 vae = FormatVAE(encoder_hidden_size=256, decoder_hidden_size=64, mlp_hidden_size=32)
 if len(sys.argv) > 1: vae.load_checkpoint(filename=sys.argv[1].split('/')[-1])
@@ -80,6 +90,15 @@ def train_one_epoch(loss, dataloader, epoch_num):
         
     avg_loss = total_loss/len(dataloader)
     return avg_loss
+
+dataset = NameDataset("data/cleaned.csv", "name", max_string_len=MAX_INPUT_STRING_LEN, format_col_name='format')
+sample_weights = weights_for_balanced_class(dataset.format_col, 'format')
+sampler = WeightedRandomSampler(sample_weights, len(sample_weights), replacement=True)
+dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, sampler=sampler, shuffle=False)
+
+vae = FormatVAE(encoder_hidden_size=256, decoder_hidden_size=64, mlp_hidden_size=32)
+if len(sys.argv) > 1: vae.load_checkpoint(filename=sys.argv[1].split('/')[-1])
+svi_loss = SVI(vae.model, vae.guide, Adam(ADAM_CONFIG), loss=simple_elbo_kl_annealing)
 
 epoch_losses = []
 for e in range(NUM_EPOCHS):
